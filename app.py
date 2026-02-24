@@ -35,12 +35,33 @@ CONFIG = get_config()
 st.set_page_config(page_title="Distributed Chatbot", page_icon="🤖")
 st.title("🤖 Distributed Chatbot")
 
+# --- API Client Setup ---
+# Use a session with retries for SSL/Connection stability over ngrok
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+session = requests.Session()
+retries = Retry(
+    total=3,
+    backoff_factor=1,
+    status_forcelist=[502, 503, 504],
+    raise_on_status=False
+)
+session.mount('https://', HTTPAdapter(max_retries=retries))
+session.mount('http://', HTTPAdapter(max_retries=retries))
+
+# Standard headers for ngrok
+API_HEADERS = {
+    "ngrok-skip-browser-warning": "true",
+    "User-Agent": "Chatbot-Frontend"
+}
+
 # --- API Health Check ---
 def check_api_health():
     if CONFIG["api_mode"] == "local":
         return True, "Running Locally"
     try:
-        response = requests.get(f"{CONFIG['api_url']}/health", timeout=5)
+        response = session.get(f"{CONFIG['api_url']}/health", headers=API_HEADERS, timeout=5)
         if response.status_code == 200:
             return True, "API Connected"
         return False, f"API Error: {response.status_code}"
@@ -57,8 +78,7 @@ def get_chat_response(messages: List[Dict]) -> Generator[str, None, None]:
         return remote_chat_with_model(messages)
 
 def remote_chat_with_model(messages: List[Dict]) -> Generator[str, None, None]:
-    """Call the remote FastAPI backend."""
-    # Prepare messages for JSON serialization (convert bytes images to base64 strings)
+    """Call the remote FastAPI backend with persistent session."""
     processed_messages = []
     for msg in messages:
         new_msg = {"role": msg["role"], "content": msg["content"], "images": []}
@@ -75,17 +95,17 @@ def remote_chat_with_model(messages: List[Dict]) -> Generator[str, None, None]:
             "messages": processed_messages,
             "model": CONFIG["model_name"]
         }
-        response = requests.post(
+        response = session.post(
             f"{CONFIG['api_url']}/chat",
             json=payload,
+            headers=API_HEADERS,
             timeout=300, 
-            stream=True # Enable streaming
+            stream=True 
         )
         
         if response.status_code == 200:
             for chunk in response.iter_content(chunk_size=None, decode_unicode=True):
                 if chunk:
-                    # Check for server-side error JSON
                     if chunk.startswith('{"error":'):
                         try:
                             error_data = json.loads(chunk)
