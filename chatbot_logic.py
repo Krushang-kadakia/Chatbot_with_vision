@@ -128,9 +128,17 @@ def chat_with_model(messages, model='qwen2.5vl:7b'):
             stream=True,
         )
         
+        yielded_any = False
         for chunk in stream:
             if 'message' in chunk and 'content' in chunk['message']:
-                yield chunk['message']['content']
+                content = chunk['message']['content']
+                if content:
+                    yielded_any = True
+                    yield content
+        
+        if not yielded_any:
+            print("DEBUG Logic: WARNING! Model returned an empty stream.")
                 
     except Exception as e:
+        print(f"DEBUG Logic: Error in chat_with_model: {e}")
         yield f"Error: {str(e)}"

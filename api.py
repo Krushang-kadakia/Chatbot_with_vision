@@ -47,14 +47,25 @@ async def chat(request: ChatRequest, req_info: Request):
         response_generator = chatbot_logic.chat_with_model(messages_data, model=request.model)
         
         def stream_response():
+            count = 0
             for chunk in response_generator:
                 if chunk.startswith("Error:"):
+                    logger.error(f"Streaming error: {chunk}")
                     yield json.dumps({"error": chunk}) + "\n"
                 else:
                     # Send raw text chunk
+                    count += 1
+                    if count % 10 == 0:
+                        logger.info(f"Generated {count} chunks...")
                     yield chunk
+            logger.info(f"Stream complete. Total chunks sent: {count}")
         
-        return StreamingResponse(stream_response(), media_type="text/plain")
+        # Add X-Accel-Buffering: no to prevent ngrok/Nginx from buffering the stream
+        return StreamingResponse(
+            stream_response(), 
+            media_type="text/plain",
+            headers={"X-Accel-Buffering": "no"}
+        )
         
     except Exception as e:
         logger.exception(f"Unexpected error in API: {e}")

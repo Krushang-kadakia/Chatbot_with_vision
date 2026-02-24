@@ -106,6 +106,7 @@ def remote_chat_with_model(messages: List[Dict]) -> Generator[str, None, None]:
         if response.status_code == 200:
             for chunk in response.iter_content(chunk_size=None, decode_unicode=True):
                 if chunk:
+                    # Check for server-side error JSON
                     if chunk.startswith('{"error":'):
                         try:
                             error_data = json.loads(chunk)
@@ -287,3 +288,4 @@ if st.session_state["messages"] and st.session_state["messages"][-1]["role"] == 
         st.session_state["messages"].append({"role": "assistant", "content": full_response})
         st.session_state["is_processing"] = False
         st.rerun()
+
