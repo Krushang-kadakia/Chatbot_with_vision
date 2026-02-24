@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+venv/
+ENV/
+
+# Streamlit
+.streamlit/
+!secrets.toml.example
+
+# Environment
+.env
+*.env
+
+# Operating System
+.DS_Store
+Thumbs.db
+
+# Project Specific
+*.png
+*.jpg
+*.jpeg
+*.pdf
+!Test1.png
+!Test2.png
+!Test3.png
+test_pdf_logic.py
+reproduce_issue.py
+api_call_script.py

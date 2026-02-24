@@ -1,0 +1,7 @@
+streamlit
+ollama
+fastapi
+uvicorn
+python-multipart
+requests
+pymupdf
