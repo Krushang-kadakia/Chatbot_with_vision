@@ -2,16 +2,45 @@ import base64
 import binascii
 import ollama
 import fitz  # PyMuPDF
-
 import hashlib
+from PIL import Image
+import io
 
 _PDF_CACHE = {}
+
+def optimize_image(img_bytes, max_dim=1024):
+    """Resize and compress image for faster AI vision processing."""
+    try:
+        img = Image.open(io.BytesIO(img_bytes))
+        
+        # Convert to RGB if necessary (e.g., for PNG with alpha)
+        if img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
+            
+        # Resizing (maintain aspect ratio)
+        w, h = img.size
+        if max(w, h) > max_dim:
+            if w > h:
+                new_w = max_dim
+                new_h = int(h * (max_dim / w))
+            else:
+                new_h = max_dim
+                new_w = int(w * (max_dim / h))
+            img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            
+        # Compression to JPEG
+        output = io.BytesIO()
+        img.save(output, format="JPEG", quality=80, optimize=True)
+        return output.getvalue()
+    except Exception as e:
+        print(f"DEBUG Logic: Optimization failed, using original: {e}")
+        return img_bytes
 
 def process_input_data(input_data):
     """
     Process input data (bytes) and return a list of image bytes.
-    - If PDF: Convert each page to an image (PNG bytes). Uses hashing to cache results.
-    - If Image: Return as a single-item list of bytes.
+    - If PDF: Convert each page to image, with resizing/compression.
+    - If Image: Optimize directly.
     """
     processed_images = []
     
@@ -20,30 +49,28 @@ def process_input_data(input_data):
         is_pdf = True
     
     if is_pdf:
-        # Generate hash of input bytes for caching
         file_hash = hashlib.md5(input_data).hexdigest()
         if file_hash in _PDF_CACHE:
-            print(f"DEBUG Logic: Returning cached PDF pages for hash {file_hash}")
             return _PDF_CACHE[file_hash]
 
         try:
-            print("DEBUG Logic: Detected PDF input. Converting pages to images...")
+            print("DEBUG Logic: Processing PDF with optimization...")
             doc = fitz.open(stream=input_data, filetype="pdf")
             for i, page in enumerate(doc):
-                pix = page.get_pixmap(matrix=fitz.Matrix(1, 1)) 
-                img_bytes = pix.tobytes("png")
-                processed_images.append(img_bytes)
-            print(f"DEBUG Logic: Converted PDF to {len(processed_images)} images.")
+                # Render at 144 DPI (sharper start)
+                pix = page.get_pixmap(matrix=fitz.Matrix(2, 2)) 
+                raw_bytes = pix.tobytes("png")
+                # Then optimize (shrink/compress) for the AI
+                processed_images.append(optimize_image(raw_bytes))
             
-            # Store in cache
             _PDF_CACHE[file_hash] = processed_images
         except Exception as e:
             print(f"DEBUG Logic: Error processing PDF: {e}")
             processed_images.append(input_data)
     else:
-        # Assume it's an image
-        print("DEBUG Logic: Detected Image input.")
-        processed_images.append(input_data)
+        # Optimize raw image upload
+        print("DEBUG Logic: Optimizing Image input.")
+        processed_images.append(optimize_image(input_data))
         
     return processed_images
 

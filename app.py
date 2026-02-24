@@ -78,7 +78,7 @@ def remote_chat_with_model(messages: List[Dict]) -> Generator[str, None, None]:
         response = requests.post(
             f"{CONFIG['api_url']}/chat",
             json=payload,
-            timeout=120, 
+            timeout=300, 
             stream=True # Enable streaming
         )
         
