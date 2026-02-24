@@ -78,18 +78,27 @@ def remote_chat_with_model(messages: List[Dict]) -> Generator[str, None, None]:
         response = requests.post(
             f"{CONFIG['api_url']}/chat",
             json=payload,
-            timeout=120, # Increased timeout for slow local processing
-            stream=False 
+            timeout=120, 
+            stream=True # Enable streaming
         )
         
         if response.status_code == 200:
-            data = response.json()
-            yield data.get("content", "")
+            for chunk in response.iter_content(chunk_size=None, decode_unicode=True):
+                if chunk:
+                    # Check for server-side error JSON
+                    if chunk.startswith('{"error":'):
+                        try:
+                            error_data = json.loads(chunk)
+                            yield error_data["error"]
+                        except:
+                            yield chunk
+                    else:
+                        yield chunk
         else:
             yield f"Error from API ({response.status_code}): {response.text}"
             
     except requests.exceptions.Timeout:
-        yield "Error: Request to API timed out. The model might be processing a complex request."
+        yield "Error: Request to API timed out."
     except Exception as e:
         yield f"Error connecting to API: {str(e)}"
 

@@ -30,35 +30,32 @@ async def health_check():
     """
     return {"status": "healthy", "timestamp": time.time()}
 
+from fastapi.responses import StreamingResponse
+import json
+
 @app.post("/chat")
 async def chat(request: ChatRequest, req_info: Request):
     """
-    Chat endpoint.
-    Accepts a list of messages and returns the assistant's response.
+    Chat endpoint with streaming support.
     """
-    start_time = time.time()
-    logger.info(f"Received chat request from {req_info.client.host} with {len(request.messages)} messages")
+    logger.info(f"Received chat request from {req_info.client.host}")
     
     try:
-        # Convert Pydantic models to dictionaries for the logic function
         messages_data = [msg.model_dump() for msg in request.messages]
         
-        # Get response generator
+        # Get response generator from logic
         response_generator = chatbot_logic.chat_with_model(messages_data, model=request.model)
         
-        full_response = ""
-        for chunk in response_generator:
-            full_response += chunk
-            
-        if full_response.startswith("Error:"):
-            logger.error(f"Logic returned error: {full_response}")
-            raise HTTPException(status_code=500, detail=full_response)
-            
-        duration = time.time() - start_time
-        logger.info(f"Successfully processed request in {duration:.2f}s")
-        return {"role": "assistant", "content": full_response}
-    except HTTPException:
-        raise
+        def stream_response():
+            for chunk in response_generator:
+                if chunk.startswith("Error:"):
+                    yield json.dumps({"error": chunk}) + "\n"
+                else:
+                    # Send raw text chunk
+                    yield chunk
+        
+        return StreamingResponse(stream_response(), media_type="text/plain")
+        
     except Exception as e:
         logger.exception(f"Unexpected error in API: {e}")
         raise HTTPException(status_code=500, detail=str(e))
