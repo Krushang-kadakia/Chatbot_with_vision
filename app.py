@@ -1,11 +1,18 @@
 import streamlit as st
+import logging
 import fitz  # PyMuPDF
 import base64
 import requests
 import json
 import os
 import time
+import ssl
+import urllib3.exceptions
 from typing import List, Dict, Generator
+ 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("ChatbotFrontend")
 
 # --- Configuration ---
 def get_config():
@@ -133,27 +140,49 @@ def remote_chat_with_model(messages: List[Dict]) -> Generator[str, None, None]:
         )
         
         if response.status_code == 200:
-            for chunk in response.iter_content(chunk_size=None, decode_unicode=True):
-                if chunk:
-                    # Check for server-side error JSON
-                    if chunk.startswith('{"error":'):
+            try:
+                for chunk in response.iter_content(chunk_size=None, decode_unicode=True):
+                    if not chunk:
+                        continue
+                        
+                    # Improved check: Handle potential leading whitespace or partial JSON chunks
+                    trimmed = chunk.strip()
+                    if trimmed.startswith('{"error":') and trimmed.endswith('}'):
                         try:
-                            error_data = json.loads(chunk)
+                            error_data = json.loads(trimmed)
                             yield error_data["error"]
-                        except:
-                            yield chunk
-                    else:
-                        yield chunk
+                            continue
+                        except (json.JSONDecodeError, KeyError):
+                            pass # Fall back to yielding raw chunk
+                    
+                    yield chunk
+            except Exception as stream_err:
+                logger.error(f"Stream interrupted: {stream_err}")
+                stream_err_str = str(stream_err)
+                if "DECRYPTION_FAILED" in stream_err_str or "bad record mac" in stream_err_str:
+                    yield f"\n\n[SSL ERROR] The connection was closed due to a 'Bad Record MAC' failure. This is common over ngrok with large payloads. Try a smaller file or switch to 'Local' mode."
+                else:
+                    yield f"\n\n[CONNECTION INTERRUPTED] {stream_err_str}"
         else:
             yield f"Error from API ({response.status_code}): {response.text}"
             
-    except requests.exceptions.SSLError as e:
-        logger.error(f"SSL Error: {e}")
-        yield f"Error: SSL Decryption / Connection failed. This usually happens over ngrok when the payload is too large or the network is unstable. Try a smaller file or switch to 'Local' mode in environment variables."
-    except requests.exceptions.Timeout:
-        yield "Error: Request to API timed out."
+    except (requests.exceptions.RequestException, ssl.SSLError, urllib3.exceptions.HTTPError) as e:
+        err_msg = str(e)
+        logger.error(f"Request Failure: {err_msg}")
+        
+        if "DECRYPTION_FAILED" in err_msg or "bad record mac" in err_msg:
+             yield f"Error: SSL Decryption Failure (Bad Record MAC). This is a known network-level issue with ngrok and large payloads. \n\n**Solutions:**\n1. Try a smaller image or shorter PDF.\n2. Ensure your internet connection is stable.\n3. Switch to 'Local' mode if possible."
+        elif isinstance(e, requests.exceptions.Timeout):
+             yield "Error: Request to API timed out."
+        else:
+             yield f"Error connecting to API: {err_msg}"
+             
     except Exception as e:
-        yield f"Error connecting to API: {str(e)}"
+        err_msg = str(e)
+        if "DECRYPTION_FAILED" in err_msg or "bad record mac" in err_msg:
+             yield f"Error: SSL Decryption Failure (Bad Record MAC). \n\n**Solution:** Try a smaller payload or check network stability."
+        else:
+             yield f"Error: {err_msg}"
 
 from PIL import Image
 import io
