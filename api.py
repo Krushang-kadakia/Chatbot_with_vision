@@ -67,9 +67,9 @@ async def chat(request: ChatRequest, req_info: Request):
                     yield json.dumps({"error": chunk}) + "\n"
                 else:
                     # Send raw text chunk
-                    count += 1
-                    if count % 10 == 0:
-                        logger.info(f"Generated {count} chunks...")
+                    # count += 1
+                    # if count % 10 == 0:
+                    #     logger.info(f"Generated {count} chunks...")
                     yield chunk
             logger.info(f"Stream complete. Total chunks sent: {count}")
         
