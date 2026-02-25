@@ -59,11 +59,22 @@ API_HEADERS = {
 # --- API Health Check ---
 def check_api_health():
     if CONFIG["api_mode"] == "local":
-        return True, "Running Locally"
+        # Check local Ollama status for consistency
+        try:
+            import ollama
+            ollama.list()
+            return True, "Ollama Ready (Local)"
+        except Exception as e:
+            return False, f"Ollama Offline (Local): {str(e)}"
+
     try:
         response = session.get(f"{CONFIG['api_url']}/health", headers=API_HEADERS, timeout=5)
         if response.status_code == 200:
-            return True, "API Connected"
+            data = response.json()
+            if data.get("status") == "healthy":
+                return True, "Systems Active (API + Ollama)"
+            else:
+                return False, f"Ollama Down: {data.get('ollama')}"
         return False, f"API Error: {response.status_code}"
     except Exception as e:
         return False, f"API Offline: {str(e)}"
@@ -84,10 +95,28 @@ def remote_chat_with_model(messages: List[Dict]) -> Generator[str, None, None]:
         new_msg = {"role": msg["role"], "content": msg["content"], "images": []}
         if "images" in msg and msg["images"]:
             for img in msg["images"]:
-                if isinstance(img, bytes):
-                    new_msg["images"].append(base64.b64encode(img).decode('utf-8'))
+                img_bytes = img
+                if isinstance(img, str) and not img.startswith("http"):
+                    try:
+                        img_bytes = base64.b64decode(img)
+                    except:
+                        pass
+                
+                # Process PDF to optimized images on client side to reduce ngrok payload
+                if isinstance(img_bytes, bytes) and img_bytes.startswith(b'%PDF'):
+                    with st.spinner("Processing PDF for upload..."):
+                        pdf_pages = get_pdf_pages(img_bytes)
+                        # Only send first 10 pages to avoid hitting payload limits
+                        for page_bytes in pdf_pages[:10]:
+                            if isinstance(page_bytes, bytes):
+                                optimized_page = optimize_image_for_api(page_bytes)
+                                new_msg["images"].append(base64.b64encode(optimized_page).decode('utf-8'))
+                # Handle regular images
+                elif isinstance(img_bytes, bytes):
+                    optimized_img = optimize_image_for_api(img_bytes)
+                    new_msg["images"].append(base64.b64encode(optimized_img).decode('utf-8'))
                 else:
-                    new_msg["images"].append(img)
+                    new_msg["images"].append(img_bytes)
         processed_messages.append(new_msg)
 
     try:
@@ -118,10 +147,38 @@ def remote_chat_with_model(messages: List[Dict]) -> Generator[str, None, None]:
         else:
             yield f"Error from API ({response.status_code}): {response.text}"
             
+    except requests.exceptions.SSLError as e:
+        logger.error(f"SSL Error: {e}")
+        yield f"Error: SSL Decryption / Connection failed. This usually happens over ngrok when the payload is too large or the network is unstable. Try a smaller file or switch to 'Local' mode in environment variables."
     except requests.exceptions.Timeout:
         yield "Error: Request to API timed out."
     except Exception as e:
         yield f"Error connecting to API: {str(e)}"
+
+from PIL import Image
+import io
+
+def optimize_image_for_api(img_bytes, max_dim=1024):
+    """
+    Client-side optimization to reduce payload size and prevent SSL issues.
+    Matches the logic used in chatbot_logic.py.
+    """
+    try:
+        img = Image.open(io.BytesIO(img_bytes))
+        if img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
+            
+        w, h = img.size
+        if max(w, h) > max_dim:
+            scale = max_dim / max(w, h)
+            img = img.resize((int(w * scale), int(h * scale)), Image.Resampling.LANCZOS)
+            
+        output = io.BytesIO()
+        img.save(output, format="JPEG", quality=80, optimize=True)
+        return output.getvalue()
+    except Exception as e:
+        st.warning(f"Optimization failed: {e}")
+        return img_bytes
 
 # --- UI Sidebar ---
 with st.sidebar:

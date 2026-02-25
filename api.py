@@ -26,9 +26,22 @@ class ChatRequest(BaseModel):
 @app.get("/health")
 async def health_check():
     """
-    Health check endpoint to verify connectivity and logic availability.
+    Health check endpoint to verify connectivity and Ollama status.
     """
-    return {"status": "healthy", "timestamp": time.time()}
+    ollama_status = "unknown"
+    try:
+        # Check if Ollama is responsive
+        import ollama
+        ollama.list()
+        ollama_status = "connected"
+    except Exception as e:
+        ollama_status = f"error: {str(e)}"
+        
+    return {
+        "status": "healthy" if ollama_status == "connected" else "degraded",
+        "ollama": ollama_status,
+        "timestamp": time.time()
+    }
 
 from fastapi.responses import StreamingResponse
 import json
