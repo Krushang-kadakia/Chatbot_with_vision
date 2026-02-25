@@ -122,7 +122,7 @@ def chat_with_model(messages, model='qwen2.5vl:7b'):
             messages=api_messages,
             options={
                 'num_thread': 8,
-                'num_ctx': 8192, # Increased context for combined text+vision tokens
+                'num_ctx': 16384, # Increased context for combined text+vision tokens
                 'temperature': 0.7
             },
             stream=True,
