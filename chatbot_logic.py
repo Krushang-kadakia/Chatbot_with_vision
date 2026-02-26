@@ -105,6 +105,7 @@ def chat_with_model(messages, model='qwen2.5vl:7b'):
     """
     try:
         # Prepare messages for Ollama
+        api_messages = []
         for i, m in enumerate(messages):
             # Create a copy so we don't mutate the original input
             msg_content = m['content']
