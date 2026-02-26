@@ -57,12 +57,11 @@ def process_input_data(input_data):
             print("DEBUG Logic: Processing PDF with text/image classification...")
             doc = fitz.open(stream=input_data, filetype="pdf")
             for i, page in enumerate(doc):
-                # Heuristic: If there are no images, no vector drawings, and there IS text -> pure text page
+                # Heuristic: If there are no images and there IS text -> classify as text page
                 page_text = page.get_text("text").strip()
                 has_images = len(page.get_images()) > 0
-                has_drawings = len(page.get_drawings()) > 0
                 
-                if page_text and not has_images and not has_drawings:
+                if page_text and not has_images:
                     processed_items.append({
                         "type": "text",
                         "page": i + 1,

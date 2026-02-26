@@ -121,9 +121,8 @@ def remote_chat_with_model(messages: List[Dict]) -> Generator[str, None, None]:
                                 page = doc[i]
                                 page_text = page.get_text("text").strip()
                                 has_images = len(page.get_images()) > 0
-                                has_drawings = len(page.get_drawings()) > 0
                                 
-                                if page_text and not has_images and not has_drawings:
+                                if page_text and not has_images:
                                     # Pure text page
                                     appended_text_blocks.append(f"\n\n[Page {i+1} - Text Content]:\n{page_text}")
                                 else:
