@@ -38,11 +38,11 @@ def optimize_image(img_bytes, max_dim=1024):
 
 def process_input_data(input_data):
     """
-    Process input data (bytes) and return a list of image bytes.
-    - If PDF: Convert each page to image, with resizing/compression.
+    Process input data (bytes) and return a list of processed items.
+    - If PDF: Convert each page to either text or optimized image based on content heuristics.
     - If Image: Optimize directly.
     """
-    processed_images = []
+    processed_items = []
     
     is_pdf = False
     if isinstance(input_data, bytes) and input_data.startswith(b'%PDF'):
@@ -54,25 +54,49 @@ def process_input_data(input_data):
             return _PDF_CACHE[file_hash]
 
         try:
-            print("DEBUG Logic: Processing PDF with optimization...")
+            print("DEBUG Logic: Processing PDF with text/image classification...")
             doc = fitz.open(stream=input_data, filetype="pdf")
             for i, page in enumerate(doc):
-                # Render at 144 DPI (sharper start)
-                pix = page.get_pixmap(matrix=fitz.Matrix(2, 2)) 
-                raw_bytes = pix.tobytes("png")
-                # Then optimize (shrink/compress) for the AI
-                processed_images.append(optimize_image(raw_bytes))
+                # Heuristic: If there are no images, no vector drawings, and there IS text -> pure text page
+                page_text = page.get_text("text").strip()
+                has_images = len(page.get_images()) > 0
+                has_drawings = len(page.get_drawings()) > 0
+                
+                if page_text and not has_images and not has_drawings:
+                    processed_items.append({
+                        "type": "text",
+                        "page": i + 1,
+                        "content": page_text
+                    })
+                else:
+                    # Render at 144 DPI (sharper start)
+                    pix = page.get_pixmap(matrix=fitz.Matrix(2, 2)) 
+                    raw_bytes = pix.tobytes("png")
+                    # Then optimize (shrink/compress) for the AI
+                    processed_items.append({
+                        "type": "image",
+                        "page": i + 1,
+                        "content": optimize_image(raw_bytes)
+                    })
             
-            _PDF_CACHE[file_hash] = processed_images
+            _PDF_CACHE[file_hash] = processed_items
         except Exception as e:
             print(f"DEBUG Logic: Error processing PDF: {e}")
-            processed_images.append(input_data)
+            processed_items.append({
+                "type": "image",
+                "page": 1,
+                "content": input_data
+            })
     else:
         # Optimize raw image upload
         print("DEBUG Logic: Optimizing Image input.")
-        processed_images.append(optimize_image(input_data))
+        processed_items.append({
+            "type": "image",
+            "page": 1,
+            "content": optimize_image(input_data)
+        })
         
-    return processed_images
+    return processed_items
 
 def chat_with_model(messages, model='qwen2.5vl:7b'):
     """
@@ -81,9 +105,10 @@ def chat_with_model(messages, model='qwen2.5vl:7b'):
     """
     try:
         # Prepare messages for Ollama
-        api_messages = []
         for i, m in enumerate(messages):
-            msg = {'role': m['role'], 'content': m['content']}
+            # Create a copy so we don't mutate the original input
+            msg_content = m['content']
+            msg = {'role': m['role']}
             
             # --- VISION CONTEXT MANAGEMENT ---
             # Rule: Only send images for the current (last) user message.
@@ -92,6 +117,8 @@ def chat_with_model(messages, model='qwen2.5vl:7b'):
             
             if is_last_message and 'images' in m and m['images']:
                 all_images_for_msg = []
+                appended_text_blocks = [] # To accumulate text elements from the PDF
+                
                 for img in m['images']:
                     # Decode if base64 string
                     img_bytes = None
@@ -105,15 +132,31 @@ def chat_with_model(messages, model='qwen2.5vl:7b'):
                     
                     if isinstance(img_bytes, bytes):
                         # PDF/Image Processing
-                        images_from_file = process_input_data(img_bytes)
+                        processed_items = process_input_data(img_bytes)
                         # LIMIT: Only send first 10 pages/images if PDF is huge
-                        all_images_for_msg.extend(images_from_file[:10]) 
+                        
+                        for item in processed_items[:10]:
+                            if isinstance(item, dict):
+                                if item.get("type") == "text":
+                                    appended_text_blocks.append(f"\n\n[Page {item['page']} - Text Content]:\n{item['content']}")
+                                elif item.get("type") == "image":
+                                    appended_text_blocks.append(f"\n\n[Page {item['page']} - Rendered as Image (see attached images)]")
+                                    all_images_for_msg.append(item["content"])
+                            else:
+                                # Fallback if returned raw bytes
+                                all_images_for_msg.append(item)
                     else:
                         all_images_for_msg.append(img)
                 
                 msg['images'] = all_images_for_msg
+                
+                # Append extracted PDF text/placeholders to the user prompt
+                if appended_text_blocks:
+                    msg_content += "\n\n" + "".join(appended_text_blocks)
+                    
                 print(f"DEBUG Logic: Sending {len(msg['images'])} images for current turn.")
             
+            msg['content'] = msg_content
             api_messages.append(msg)
 
         # Increase context size and set num_thread for multi-modal stability

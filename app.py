@@ -109,15 +109,38 @@ def remote_chat_with_model(messages: List[Dict]) -> Generator[str, None, None]:
                     except:
                         pass
                 
-                # Process PDF to optimized images on client side to reduce ngrok payload
+                # Process PDF to optimized images or extracted text on client side to reduce ngrok payload
                 if isinstance(img_bytes, bytes) and img_bytes.startswith(b'%PDF'):
                     with st.spinner("Processing PDF for upload..."):
-                        pdf_pages = get_pdf_pages(img_bytes)
-                        # Only send first 10 pages to avoid hitting payload limits
-                        for page_bytes in pdf_pages[:10]:
-                            if isinstance(page_bytes, bytes):
-                                optimized_page = optimize_image_for_api(page_bytes)
-                                new_msg["images"].append(base64.b64encode(optimized_page).decode('utf-8'))
+                        try:
+                            doc = fitz.open(stream=img_bytes, filetype="pdf")
+                            appended_text_blocks = []
+                            
+                            # Only process first 10 pages to avoid hitting payload limits
+                            for i in range(min(10, len(doc))):
+                                page = doc[i]
+                                page_text = page.get_text("text").strip()
+                                has_images = len(page.get_images()) > 0
+                                has_drawings = len(page.get_drawings()) > 0
+                                
+                                if page_text and not has_images and not has_drawings:
+                                    # Pure text page
+                                    appended_text_blocks.append(f"\n\n[Page {i+1} - Text Content]:\n{page_text}")
+                                else:
+                                    # Page has visuals, render it
+                                    pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
+                                    optimized_page = optimize_image_for_api(pix.tobytes("png"))
+                                    new_msg["images"].append(base64.b64encode(optimized_page).decode('utf-8'))
+                                    appended_text_blocks.append(f"\n\n[Page {i+1} - Rendered as Image (see attached images)]")
+                            
+                            if appended_text_blocks:
+                                new_msg["content"] += "\n\n" + "".join(appended_text_blocks)
+                                
+                        except Exception as e:
+                            logger.error(f"Error processing PDF client-side: {e}")
+                            # Fallback to the old method sending raw bytes if python parsing fails
+                            new_msg["images"].append(base64.b64encode(img_bytes).decode('utf-8'))
+                        
                 # Handle regular images
                 elif isinstance(img_bytes, bytes):
                     optimized_img = optimize_image_for_api(img_bytes)
